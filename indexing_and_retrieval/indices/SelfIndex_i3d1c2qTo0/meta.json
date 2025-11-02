@@ -1,0 +1,1 @@
+{"config": {"core": "SelfIndex", "info": "TFIDF", "dstore": "CUSTOM", "qproc": "TERMatat", "compr": "CODE", "optim": "Null"}, "N": 5000}
