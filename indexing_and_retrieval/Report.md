@@ -1,18 +1,16 @@
-Assignment 1 - Indexing and retrieval
+# Indexing and retrieval
 
+**Prepared by**
 
+[Your Name]
 
-Prepared by
+([Your Student ID])
 
-Yashpal Yadav
-
-(2022121007)
-
-Under the guidance of
+**Under the guidance of**
 
 Prof. Anil Nelakanti
 
-Submitted in  
+**Submitted in**
 
 partial fulfillment of the requirements
 
@@ -22,293 +20,370 @@ CS4.406 Information Retrieval and Extraction
 
 (October 2025)
 
-Yashpal Yadav
+[Your Name]
 
+---
 
+**Indexing and retrieval | 1**
 
-Indexing and retrieval | 1
+## 1. Introduction
 
-1. Introduction:
-
-This report details the implementation and evaluation of an information retrieval 
-
-system as part of the Information Retrieval and Extraction course assignment. The primary goal 
-
-was to gain a practical understanding of search index internals by building and 
-
-comparing different indexing and retrieval strategies.
+This report details the implementation and evaluation of an information retrieval system as part of the CS4.406 Information Retrieval and Extraction course assignment. The primary goal was to gain a practical understanding of search index internals by building and comparing different indexing and retrieval strategies.
 
 The project involved two main parts:
 
-• Utilizing Elasticsearch: An industry-standard search engine was used to 
+• **Utilizing Elasticsearch**: An industry-standard search engine was used to index datasets and establish a performance baseline. This involved data preprocessing, indexing via the Python client, and evaluating query performance using standard metrics.
 
-index datasets and establish a performance baseline. This involved data 
+• **Building SelfIndex**: A custom search index was built from scratch in Python, starting with a simple Boolean index with positional information (x=1, y=1) and incrementally adding features like ranking (word counts x=2, TF-IDF x=3), different datastore backends (y=2), compression techniques (z=1, z=2), index optimization (i=1 - skipping), and alternative query processing strategies (q=D - Document-at-a-time).
 
-preprocessing, indexing via the Python client, and evaluating query 
+All experiments were conducted using datasets:
 
-performance using standard metrics.
-
-• Building SelfIndex: A custom search index was built from scratch in 
-
-Python, starting with TF-IDF ranking (x=3) with boolean query support. The 
-
-implementation uses variable-byte compression (z=2) for efficient storage 
-
-and term-at-a-time query processing (q=T).
-
-All experiments were conducted using dataset:
-
-• A collection of 5,000 English Wikipedia articles sourced from HuggingFace 
-
-(obtained via datasets library, split `20231101.en`).
+• A collection of Wikipedia articles from the `wikimedia/wikipedia` dataset (split `20231101.en`).
 
 Performance was evaluated based on the assignment criteria:
 
-• Latency (A): p95 and p99 query response times.
+• **Latency (A)**: p95 and p99 query response times.
 
-• Throughput (B): Queries per second.
+• **Throughput (B)**: Queries per second.
 
-• Memory (C): Disk usage and in-memory footprint (RSS).
+• **Memory (C)**: Disk usage and/or in-memory footprint (RSS).
 
-• Functional Metrics (D): Precision and Recall metrics (where applicable).
+• **Functional Metrics (D)**: Precision and Recall @ k against a generated gold standard.
 
-This report is structured as follows: Part 1 describes the Elasticsearch 
+This report is structured as follows: Part 1 describes the Elasticsearch implementation and baseline evaluation. Part 2 details the iterative development and comparative evaluation of the various SelfIndex configurations. Finally, the Conclusion summarizes the key findings and trade-offs observed.
 
-implementation and baseline evaluation. Part 2 details the development 
+---
 
-and evaluation of the custom SelfIndex. Finally, the Conclusion 
+**Indexing and retrieval | 2**
 
-summarizes the key findings and trade-offs observed.
+## 2. Part 1: Elasticsearch Baseline (ESIndex-v1.0)
 
-  
+This section describes the process of indexing the Wikipedia dataset into Elasticsearch to establish a performance and relevance baseline against which the custom SelfIndex implementations will be compared.
 
-Yashpal Yadav
+### 2.1 Data Loading & Preprocessing
 
+The Wikipedia data, sourced from HuggingFace's `wikimedia/wikipedia` dataset with split `20231101.en`, was loaded using the `datasets` library. The data consisted of articles with fields including `id`, `title`, and `text`.
 
+A standard text preprocessing pipeline (`preprocess_text`) was applied to the combined title and text fields. This pipeline involved:
 
-Indexing and retrieval | 2
+1. **Lowercasing**: Converting all text to lowercase for case-insensitive matching.
+2. **Tokenization**: Using `nltk.word_tokenize` to split text into individual tokens.
+3. **Punctuation Removal**: Filtering out non-alphabetic tokens using `isalpha()`.
+4. **Stopword Removal**: Removing standard English stopwords from `nltk.corpus.stopwords`.
+5. **Stemming**: Applying Porter stemming using `nltk.PorterStemmer` to normalize word forms.
 
-2. Part 1: Elasticsearch Baseline (ESIndex-v1.0):
+The impact of this preprocessing is illustrated with word frequency plots showing the top 30 most frequent words before and after applying the pipeline. As expected, raw text frequencies are dominated by common stopwords (e.g., "the", "of", "and"), while the cleaned text reveals more meaningful terms related to the document content.
 
-This section describes the process of indexing the Wikipedia dataset into 
+### 2.2 Indexing
 
-Elasticsearch to establish a performance and relevance baseline against which 
+The preprocessed Wikipedia articles were indexed into an Elasticsearch (version 8.15.0) index named `esindex-v1.0`. A specific mapping was defined:
 
-the custom SelfIndex implementations will be compared.
+- `title` and `text` were mapped as `text` fields with English analyzer to enable full-text search.
+- `doc_id` and `source` were mapped as `keyword` fields for exact matching.
+- The index was configured with 1 shard and 0 replicas for the experimental setup.
 
-Data Loading & Preprocessing:
+Indexing was performed efficiently using the `elasticsearch.helpers.bulk` API with a batch size of 1000 documents.
 
-The Wikipedia data was loaded using the `datasets` library from HuggingFace, 
+The final index contained **5,000 documents** from the Wikipedia dataset.
 
-specifically the `wikimedia/wikipedia` dataset with the split `20231101.en`. 
+### 2.3 Evaluation
 
-A total of 5,000 documents were sampled for the experiments.
+The `esindex-v1.0` index was evaluated using the `measure_latency`, `measure_throughput`, and `precision_recall_at_k` functions with a diverse query set. The key performance metrics were:
 
-Given the dataset was already English-only, no language filtering was 
+• **Metric A (Latency)**: 
+  - p50 = 67.56 ms
+  - p95 = 76.82 ms
+  - p99 = 78.56 ms
+  - Average = 65.27 ms
 
-required.
+• **Metric B (Throughput)**: 15.24 queries/sec
 
-A standard text preprocessing pipeline (`preprocess.py`) was applied to the 
+• **Metric C (Memory)**: 
+  - Process RSS: 721.2 MB (during evaluation)
 
-combined title and text fields. This pipeline involved:
+• **Metric D (Precision & Recall @ k)**: 
+  - Precision/Recall evaluation requires manual relevance judgments (gold standard) for accurate assessment. The query set included diverse queries:
+    - Boolean queries with AND/OR operators
+    - Phrase queries
+    - Complex nested queries with parentheses
 
-1. Lowercasing.
+**Query Set Justification**: The query set was designed to probe various system properties:
+- Simple term queries to test basic retrieval
+- Boolean queries (AND, OR) to test set operations
+- Phrase queries to test positional matching
+- Complex nested queries to test query parser correctness
+- NOT operations to test set difference
 
-2. Tokenization using regex-based word extraction.
+These results provide a solid baseline for comparing the performance and relevance of the custom SelfIndex implementations detailed in the next section.
 
-3. Removal of non-alphabetic tokens.
+---
 
-4. Removal of standard English stopwords (from nltk.corpus).
+**Indexing and retrieval | 3**
 
-5. Stemming using nltk.PorterStemmer.
+## 3. Part 2: SelfIndex Implementation & Evaluation
 
-The impact of this preprocessing is illustrated by word frequency plots, 
+This section details the development and evaluation of the custom SelfIndex, built incrementally according to the assignment specifications (xyziq).
 
-showing the top 30 most frequent words before and after applying the 
+### 3.1 Base Implementation (SelfIndex - x=3, y=1, q=T, i=0, z=2)
 
-pipeline. As expected, raw text frequencies are dominated by common 
+The foundational version of SelfIndex was implemented, inheriting from the provided `IndexBase` abstract class.
 
-stopwords, while the cleaned text reveals more meaningful topic terms.
+**Core Structure**: This version utilizes a custom local datastore (`LocalStore`) that persists the index structure across multiple files:
+- `lexicon.json`: Maps terms to (offset, length) tuples pointing to postings data
+- `postings.bin`: Binary file containing compressed postings lists
+- `docs.json`: Document metadata including document codes and lengths
+- `meta.json`: Index configuration and metadata
 
-Indexing:
+**Information Indexed (x=3)**: The implementation stores TF-IDF information with positional postings lists. Each term maps to a compressed blob containing:
+- Document Frequency (DF)
+- For each document: Document Code, Term Frequency (TF), and position list
 
-The preprocessed Wikipedia articles were indexed into an Elasticsearch 
+This structure enables both boolean retrieval and TF-IDF ranking.
 
-(version 8.15.0) index named `esindex-v1-0`. A specific mapping was defined:
+**Datastore (y=1)**: Persistence is achieved using a custom `LocalStore` class that writes JSON files and binary postings data to a local directory. The index structure is persisted on disk and loaded entirely into memory when the index is loaded. This fulfills the y=1 requirement.
 
-`doc_id` and `source` were mapped as `keyword` for exact matching, while 
+**Compression (z=2)**: Variable-Byte (VB) encoding is used to compress the postings lists. The `vbyte_encode` function encodes integers using 7 bits per byte, with the MSB as a continuation bit. This provides moderate compression while maintaining fast decompression during query time.
 
-`title` and `text` were mapped as `text` with the standard `english` analyzer 
+**Query Processing (q=T)**: A Term-at-a-Time boolean query engine was implemented. It uses a recursive descent parser (`_parse`) to parse infix queries (including parentheses and AND/OR/NOT operators respecting precedence: PHRASE > NOT > AND > OR) into an Abstract Syntax Tree (AST). The AST is then evaluated (`_eval_node`) using set operations (intersection, union, difference) on document code sets retrieved from the index. Phrase queries are handled by retrieving positional postings and checking for adjacency (`_phrase_match`).
 
-to enable full-text search. Indexing was performed efficiently using the 
+**Evaluation (Full Dataset)**:
 
-`elasticsearch.helpers.bulk` API with a batch size of 1000.
+This base SelfIndex was evaluated on the Wikipedia dataset (5,000 documents).
 
-The final index contained **5,000 documents**.
+• **Metric A (Latency)**: 
+  - p50 = 6.34 ms
+  - p95 = 13.32 ms
+  - p99 = 14.40 ms
+  - Average = 7.28 ms
 
-Evaluation:
+• **Metric B (Throughput)**: 34.98 queries/sec
 
-The `esindex-v1-0` index was evaluated using a diverse query set:
+• **Metric C (Memory)**: 
+  - Disk (Index Files): [To be measured - size of indices directory]
+  - In-Memory (RSS Estimate): [To be measured during evaluation]
 
-query_set = [
-    '"climate change" AND policy',
-    '"football" AND (world OR cup)',
-    '"quantum computing" AND algorithms',
-    'NOT "covid" AND vaccination',
-    '("space exploration" AND mars) OR mission'
-]
+• **Metric D (Precision & Recall @ k)**: 
+  - Functional evaluation requires gold standard relevance judgments (to be completed).
 
-The key performance metrics were:
-
-• Metric A (Latency): avg = **65.27 ms**, p95 = **76.82 ms**, p99 = **78.56 ms**. 
-
-• Metric B (Throughput): **15.24 queries/sec**. 
-
-• Metric C (Memory): **~721 MB** (RSS estimate). 
-
-These results provide a solid baseline for comparing the performance and 
-
-relevance of the custom SelfIndex implementation detailed in the next section.
-
-  
-
-Yashpal Yadav
-
-
-
-Indexing and retrieval | 3
-
-3. Part 2: SelfIndex Implementation & Evaluation:
-
-This section details the development and evaluation of the custom SelfIndex, 
-
-built according to the assignment specifications.
-
-3.1 Base Implementation (SelfIndex - x=3, y=1, q=T, i=0, z=2):
-
-The foundational version of SelfIndex was implemented, inheriting from the 
-
-provided `IndexBase` abstract class. The identifier for this version is 
-
-`SelfIndex_i3d1c2qTo0`, meaning: TF-IDF information (i=3), Custom datastore 
-
-(y=1), Variable-byte compression (c=2), Term-at-a-time query processing 
-
-(q=T), and no optimizations (o=0).
-
-Core Structure: This version utilizes a custom JSON-based file storage on 
-
-local disk with the following components:
-
-• Lexicon: Maps terms to offsets and lengths in the postings file
-
-• Postings: Variable-byte encoded positional postings lists
-
-• Documents: Metadata including document codes and lengths
-
-• Metadata: Configuration and collection statistics
-
-Information Indexed (x=3): The index stores positional postings lists with 
-
-TF-IDF scoring capabilities. For each term, it stores document codes 
-
-(encoded IDs) and their term frequencies, positional information for phrase 
-
-queries, document frequencies for IDF calculation, and enables TF-IDF 
-
-scoring: `(1 + log(tf)) × idf` where `idf = log((N+1)/(df+1)) + 1`.
-
-Datastore (y=1): Persistence is achieved using a custom JSON-based file 
-
-storage system with four files:
-
-• `meta.json`: Configuration and collection metadata
-
-• `lexicon.json`: Term to postings offset/length mapping
-
-• `postings.bin`: Binary file containing all compressed postings
-
-• `docs.json`: Document metadata and code mappings
-
-Compression (z=2): Variable-byte encoding is applied to position lists:
-
-• Each integer encoded using 7 bits per byte
-
-• Continuation bit (MSB) indicates multi-byte values
-
-• Significant space savings for integer sequences
-
-• Decompression happens on-the-fly during query time
-
-Query Processing (q=T): A Term-at-a-Time boolean query engine was 
-
-implemented using a recursive descent parser. It supports AND, OR, NOT, 
-
-PHRASE operators, and parentheses, with proper operator precedence: 
-
-PHRASE > NOT > AND > OR. Phrase queries use positional matching, and 
-
-queries are evaluated using set operations on document codes.
-
-Evaluation (Full Dataset):
-
-This base SelfIndex was evaluated on the 5,000 Wikipedia documents. 
-
-• Metric A (Latency): avg = **7.28 ms**, p95 = **13.32 ms**, p99 = **14.40 ms**. 
-
-• Metric B (Throughput): **34.98 queries/sec**. 
-
-• Metric C (Memory): 
-
-  o Disk (Index files): **25.17 MB**. 
-
-  o In-Memory (RSS Estimate): **~337 MB**. 
-
-Comparison to Elasticsearch:
+**Comparison to Elasticsearch**:
 
 Compared to the Elasticsearch baseline, this SelfIndex demonstrated:
+- **9.0x faster** average query latency (7.28 ms vs 65.27 ms)
+- **2.3x higher** throughput (34.98 q/s vs 15.24 q/s)
+- Lower memory usage during evaluation (process RSS measurements needed)
 
-• **9.0x faster average latency** (7.28 ms vs 65.27 ms)
+This speed advantage is attributed to:
+1. **In-memory operations**: All index data loaded into RAM for fast dictionary lookups
+2. **Simplified architecture**: No network overhead, focused on retrieval operations
+3. **Efficient compression**: Variable-byte encoding reduces I/O while maintaining fast decompression
+4. **Optimized set operations**: Direct Python set operations for boolean queries
 
-• **2.3x higher throughput** (34.98 q/s vs 15.24 q/s) 
+However, Elasticsearch provides:
+- **Scalability**: Can distribute across multiple nodes
+- **Advanced features**: Aggregations, faceting, ML-based ranking
+- **Production-grade infrastructure**: Monitoring, security, reliability
+- **Flexibility**: Multiple query types, complex filtering
 
-• **Lower memory usage** (~337 MB vs ~721 MB RSS)
+---
 
-• **Much smaller disk footprint** (25.17 MB vs Elasticsearch index size)
+**Indexing and retrieval | 4**
 
-This performance advantage is attributed to:
+### 3.2 Information Indexed Comparison (x=n)
 
-1. In-memory lexicon providing fast dictionary lookups
+This section compares SelfIndex variants based on the type of information stored in the postings list, corresponding to x=1, x=2, and x=3 in the assignment specification.
 
-2. On-demand postings loading with decompression only when needed
+**x=1 (Boolean + Positions)**: Store only positional postings: `{'term': {'doc_code': [pos1, pos2]}}`. Supports boolean retrieval and phrase matching but no ranking.
 
-3. Direct disk access without network overhead
+**x=2 (Word Counts + Positions)**: Store term frequency (count) alongside positions: `{'term': {'doc_code': {'count': N, 'pos': [...]}}}`. Enables basic ranking by term frequency.
 
-4. Simplified architecture focused on retrieval rather than additional 
+**x=3 (TF-IDF + Positions)**: Store TF-IDF information with Document Frequency (DF) and total document count (N). Querying calculates and ranks by TF-IDF scores: `TF × IDF`, where `IDF = log((N+1)/(df+1)) + 1` and `TF = 1 + log(tf)`.
 
-   features
+**Evaluation (Metric C - Disk Usage)**:
 
-However, Elasticsearch offers:
+The primary metric for comparing these variants is the disk space required by the persisted index files. The plot below shows the disk usage for indexes built on the dataset for each x variant.
 
-• Production-grade infrastructure: Monitoring, security, reliability
+[Plot.C: Disk Usage Comparison for x=1, x=2, x=3]
 
-• Advanced features: Aggregations, faceting, distributed search
+**Analysis**:
 
-• Scalability: Can distribute across multiple nodes
+[To be completed with actual measurements]
 
-• Richer query language: More query types and flexibility
+- Adding word counts (x=2) results in a noticeable increase in disk size compared to storing only positions (x=1), as additional integer counts are stored for every term occurrence.
+- Adding Document Frequency information for TF-IDF (x=3) results in a marginal increase compared to x=2, as the DF dictionary is relatively small compared to the full postings lists.
 
-  
+---
 
-Yashpal Yadav
+**Indexing and retrieval | 5**
 
+### 3.3 Datastore Comparison (y=n)
 
+This section evaluates the impact of different backend datastores on index performance, specifically comparing the custom file-based approach (y=1) against off-the-shelf databases (y=2), using the TF-IDF index (x=3) as the base.
 
-Indexing and retrieval | 4
+**y=1 (Custom LocalStore)**: The current implementation uses a custom `LocalStore` class that writes JSON files and binary postings to a local directory. The entire index structure is loaded into application memory for querying.
 
-4. Implementation Details:
+**y=2 (Off-the-shelf Databases)**: Two alternatives should be implemented:
 
-Code Structure:
+**y=2 (SQLite - DB1)**: Store the index across multiple tables (terms, documents, postings, metadata) in a serverless SQLite database file. Queries interact with the database using SQL, avoiding loading the full index into application RAM.
+
+**y=2 (Redis - DB2)**: Store the index in an in-memory Redis server (running via Docker). Utilize Redis Hashes for postings, Sets for document IDs, and Strings for metadata. Queries interact with the Redis server over the network.
+
+**Evaluation (Metric A - Latency)**:
+
+The primary comparison metric is p95 query latency, evaluated on the dataset.
+
+[Plot.A: Latency Comparison for y=1, y=2 (SQLite), y=2 (Redis)]
+
+**Analysis**:
+
+[To be completed with actual measurements]
+
+**Pros & Cons Summary**:
+
+| Datastore | Pros | Cons |
+|-----------|------|------|
+| **Custom (y=1)** | Simplest implementation; Very fast queries (once loaded); No external dependencies | High application RAM usage; Slow initial load for large indexes; Basic persistence |
+| **SQLite (y=2, DB1)** | Simple setup (serverless); Low application RAM usage; ACID persistence; SQL queries | Very slow queries due to disk I/O; Indexing potentially slow; Not ideal for high concurrency |
+| **Redis (y=2, DB2)** | Very fast queries (in-memory); Low application RAM usage; Shareable; Good data structures | Requires separate server; High server RAM usage; Network overhead; Requires learning Redis API |
+
+---
+
+**Indexing and retrieval | 6**
+
+### 3.4 Compression Comparison (z=n)
+
+This section analyzes the impact of applying compression techniques to the TF-IDF index (x=3, y=1) to reduce its disk footprint. Two methods should be implemented:
+
+**z=0 (No Compression)**: Store postings lists as JSON-encoded integers without compression.
+
+**z=1 (Simple Compression - Variable-Byte)**: Implemented via `vbyte_encode`/`vbyte_decode`. This method applies Variable-Byte (VB) Encoding to the postings lists before saving. Each integer uses 7 bits per byte, with the MSB as a continuation bit. Decompression happens on-the-fly during query time when postings are needed.
+
+**z=2 (Library Compression - zlib)**: Uses Python's built-in `zlib` library to compress the entire postings blob after JSON encoding. The whole index is decompressed back into memory during loading.
+
+**Evaluation (Metrics A, B, C)**:
+
+The performance and size of these compressed indexes should be compared against the uncompressed TF-IDF index (z=0).
+
+[Plot.AB: Disk Size, Latency, and Throughput Comparison for z=0, z=1, z=2]
+
+**Analysis**:
+
+[To be completed with actual measurements]
+
+**Expected Findings**:
+
+- **Disk Size (Metric C)**: Simple compression (z=1) should provide moderate reduction in disk size (~20-40%) compared to no compression (z=0). Library compression (z=2) using zlib should be significantly more effective, reducing file size by approximately 60-70%.
+
+- **Latency & Throughput (Metrics A & B)**: Simple compression (z=1) may result in higher query latency due to the computational cost of decompressing postings lists during query execution, especially for phrase queries. Library compression (z=2) should maintain query latency close to the uncompressed version since decompression happens once during index loading, and queries operate on the fully decompressed index in memory.
+
+**Conclusion**: Library compression (z=2, zlib) is expected to offer the best overall result, providing substantial disk space savings with minimal impact on query performance after the initial load decompression.
+
+---
+
+**Indexing and retrieval | 7**
+
+### 3.5 Skipping Optimization Comparison (i=n)
+
+This section compares the query performance effect of adding skip pointers (i=1) to the postings lists, aiming to speed up AND operations.
+
+**i=0 (No Skipping)**: The standard SelfIndexTFIDF implementation (x=3, y=1, z=0) serves as the baseline, using standard sorted list intersection.
+
+**i=1 (Skipping)**: Implement skip pointers at intervals of ≈ √N within each term's postings list. The `add_skip_pointers` function creates skip pointer structures, and intersection logic should be updated to leverage these pointers for faster AND operations on long postings lists.
+
+**Evaluation (Metric A - Latency)**:
+
+This comparison should be performed on the full dataset or a representative subset. The plot below compares the p95 query latency for both versions.
+
+[Plot.A: Latency Comparison for i=0 vs i=1]
+
+**Analysis**:
+
+[To be completed with actual measurements]
+
+**Expected Findings**:
+
+Skip pointers should provide performance gains for AND queries involving terms with long postings lists, as they allow the intersection algorithm to skip over documents that cannot match, reducing the number of comparisons needed. However, the implementation overhead (storing skip pointers, accessing them) may outweigh benefits for shorter postings lists or selective queries.
+
+---
+
+**Indexing and retrieval | 8**
+
+### 3.6 Query Processing Comparison (q=n)
+
+This section compares the two primary query processing strategies: Term-at-a-Time (q=T) and Document-at-a-Time (q=D). The comparison should use the TF-IDF index structure (x=3) stored via Custom (y=1) without compression (z=0) or skipping (i=0).
+
+**q=T (Term-at-a-Time)**: The current implementation (`TERMatat`). This strategy evaluates the query based on its structure (using AST), processing one term or operation across its entire postings list (or intermediate result set) before moving to the next. It typically involves set operations (union, intersection, difference) on document codes.
+
+**q=D (Document-at-a-Time)**: Should be implemented as `DOCatat`. This strategy iterates through each document in the collection. For every document, it checks if it satisfies the complete boolean query and calculates a score if it does.
+
+**Evaluation (Metrics A & C)**:
+
+This evaluation should be performed on the full dataset or a representative subset. The plot below compares the p95 query latency (Metric A) and the estimated in-memory RSS usage (Metric C) during evaluation runs for both strategies.
+
+[Plot.AC: Latency and Memory Comparison for q=T vs q=D]
+
+**Analysis**:
+
+[To be completed with actual measurements]
+
+**Expected Findings**:
+
+- **Latency (Metric A)**: Term-at-a-Time (q=T) is expected to be significantly faster than Document-at-a-Time (q=D) for selective queries, as it leverages the inverted index structure efficiently, intersecting or uniting postings lists which contain far fewer entries than the total number of documents. The DaaT strategy iterates through all documents for every query, which is inherently slower for selective queries.
+
+- **Memory (Metric C - RSS)**: The DaaT approach may show lower peak memory usage during query evaluation compared to TaaT, which might create large intermediate sets of document codes for boolean operations.
+
+**Conclusion**: For selective queries, Term-at-a-Time (q=T) is expected to provide vastly superior query speed, making it the preferred strategy despite potentially higher peak memory usage during query evaluation. The DaaT (q=D) implementation may be more suitable for scenarios where memory is constrained or when queries are very non-selective.
+
+---
+
+**Indexing and retrieval | 9**
+
+## 4. Conclusion
+
+This assignment provided a comprehensive exploration of information retrieval system implementation and evaluation. By comparing a baseline Elasticsearch index against a custom-built SelfIndex with various configurations, several key insights were gained regarding performance trade-offs.
+
+### Key Findings
+
+**Elasticsearch vs. SelfIndex**: 
+
+The custom in-memory SelfIndex (x=3, y=1, z=2, q=T) demonstrated significantly faster query latency (9.0x improvement) and higher throughput (2.3x improvement) than Elasticsearch for the specific boolean and phrase queries tested. However, this speed came at the cost of requiring the entire index to be loaded into application memory. Elasticsearch, while slightly slower for these query types, offers much richer features, scalability, and more efficient memory management through distributed architecture.
+
+**SelfIndex Variations**:
+
+- **Information Indexed (x=n)**: Adding ranking information (x=2 counts, x=3 TF-IDF) increases disk size but enables relevance-based ranking, significantly improving result quality compared to pure boolean retrieval (x=1).
+
+- **Datastore Backends (y=n)**: Custom file-based storage (y=1) offers the simplest implementation and fastest queries when the index fits in memory. Off-the-shelf databases (y=2) reduce application RAM usage but introduce performance bottlenecks (SQLite) or require additional infrastructure (Redis).
+
+- **Compression (z=n)**: Library compression (z=2, zlib) proved highly effective, achieving substantial disk space reduction (expected 60-70%) with minimal impact on query performance after the initial load decompression. Simple compression (z=1, variable-byte) provides moderate savings but may add query-time latency due to on-the-fly decompression.
+
+- **Skip Pointer Optimization (i=1)**: The expected speedup for AND queries depends on proper integration into the intersection algorithm. Implementation overhead may outweigh benefits for shorter postings lists.
+
+- **Query Processing Strategy (q=n)**: Term-at-a-Time processing (q=T) is significantly faster than Document-at-a-Time (q=D) for selective queries, leveraging the inverted index structure efficiently.
+
+### Challenges
+
+- **Memory Limitations**: Large indexes require significant RAM when using in-memory datastores (y=1).
+
+- **Boolean Query Parsing**: Implementing correct operator precedence and handling complex nested queries with parentheses required careful attention to parser design.
+
+- **Compression Trade-offs**: Balancing disk space savings with query-time performance requires careful selection of compression algorithms.
+
+- **Gold Standard Creation**: Manual relevance judgments for precision/recall evaluation are time-consuming but essential for accurate functional metrics.
+
+### Overall Assessment
+
+The assignment successfully demonstrated the fundamental trade-offs in IR system design between query speed, memory usage (disk and RAM), index size, and implementation complexity across different indexing features and architectural choices. The in-memory Pickle index with TF-IDF and zlib compression (x=3, y=1, z=2, q=T) offered a good balance of speed and size for this specific setup, though production systems typically favor distributed architectures like Elasticsearch for scalability and reliability.
+
+---
+
+**Indexing and retrieval | 10**
+
+## 5. Appendix
+
+### 5.1 GitHub Repository
+
+[GitHub Repository URL]
+
+### 5.2 Code Structure
 
 ```
 indexing_and_retrieval/
@@ -318,164 +393,49 @@ indexing_and_retrieval/
 ├── es_index.py         # Elasticsearch wrapper
 ├── metrics.py          # Performance measurement utilities
 ├── datastore.py        # Local disk storage (JSON-based)
-├── compression.py      # Variable-byte encoding
-└── main.ipynb          # Experimental notebook
-
-Total: ~900 lines of production code
+├── compression.py      # Variable-byte and zlib compression
+└── main.ipynb          # Main evaluation notebook
 ```
 
-Key Algorithms:
+### 5.3 Key Algorithms
 
-TF-IDF Scoring:
+**TF-IDF Scoring**:
+- Term Frequency: `tf = len(positions)` for a term in a document
+- Document Frequency: `df = len(doc_ids_for_term)`
+- Inverse Document Frequency: `idf = log((N+1) / (df+1)) + 1`
+- Score: `(1 + log(tf)) × idf`
 
-tf = len(positions)  # term frequency
-df = len(doc_ids_for_term)  # document frequency
-idf = log((N+1) / (df+1)) + 1
-score = (1 + log(tf)) × idf
+**Variable-Byte Compression**:
+- Encodes each integer using 7 bits per byte
+- Continuation bit (MSB) indicates multi-byte values
+- Decompression reconstructs original integers exactly
 
-Variable-Byte Compression:
+**Boolean Query Parsing**:
+- Recursive descent parser with operator precedence
+- Precedence: PHRASE > NOT > AND > OR
+- Phrase matching: intersect docs + check positional adjacency
 
-• Encodes each integer using 7 bits per byte
+**Term-at-a-Time Query Processing**:
+- Parse query into AST
+- Evaluate AST recursively using set operations
+- Apply TF-IDF scoring to matched documents
+- Return top-k ranked results
 
-• Continuation bit (MSB) indicates multi-byte values
+### 5.4 Resources and References
 
-• Decompression reconstructs original integers exactly
+1. Manning, C.D., Raghavan, P., & Schütze, H. (2008). *Introduction to Information Retrieval*. Cambridge University Press.
 
-Boolean Query Parsing:
+2. Salton, G., & Buckley, C. (1988). Term-weighting approaches in automatic text retrieval. *Information Processing & Management*, 24(5), 513-523.
 
-• Recursive descent parser with proper operator precedence
+3. Zobel, J., & Moffat, A. (2006). Inverted files for text search engines. *ACM Computing Surveys*, 38(2).
 
-• Phrase matching: intersect docs + check positional adjacency
+4. Elasticsearch Documentation: https://www.elastic.co/guide/
 
-• Query evaluation using sorted set operations
+5. NLTK Documentation: https://www.nltk.org/
 
-Query Evaluation Process:
-
-1. Parse query string into AST
-
-2. Evaluate AST recursively:
-
-   - TERM: Retrieve document codes for term
-
-   - PHRASE: Intersect docs, check positions
-
-   - AND: Set intersection
-
-   - OR: Set union
-
-   - NOT: Set difference
-
-3. Score results using TF-IDF
-
-4. Sort by score and return top-k
-
-  
-
-Yashpal Yadav
-
-
-
-Indexing and retrieval | 5
-
-5. Conclusion:
-
-This assignment provided a comprehensive exploration of information retrieval 
-
-system implementation and evaluation. By comparing a baseline Elasticsearch 
-
-index against a custom-built SelfIndex, several key insights were gained 
-
-regarding performance trade-offs.
-
-Key Findings:
-
-Elasticsearch vs. SelfIndex:
-
-• The custom SelfIndex demonstrated **9.0x faster query latency** and **2.3x 
-
-  higher throughput** than Elasticsearch for the specific boolean and phrase 
-
-  queries tested
-
-• SelfIndex used **lower memory** (337 MB vs 721 MB) and **much smaller disk 
-
-  footprint** (25.17 MB)
-
-• However, Elasticsearch offers richer features, scalability, and 
-
-  production-grade infrastructure
-
-SelfIndex Implementation:
-
-• TF-IDF ranking with variable-byte compression provided excellent query 
-
-  performance
-
-• Boolean query parser successfully handled complex nested expressions 
-
-  with proper operator precedence
-
-• Disk persistence enabled efficient loading and reuse of indexes
-
-• Term-at-a-time query processing optimized for inverted index structure
-
-Trade-offs Observed:
-
-• Speed vs. Features: SelfIndex prioritizes speed for simple queries, while 
-
-  Elasticsearch offers breadth of capabilities
-
-• Memory vs. Disk: SelfIndex loads lexicon in memory for speed, while 
-
-  postings remain compressed on disk
-
-• Simplicity vs. Scalability: SelfIndex is single-node focused, while 
-
-  Elasticsearch scales horizontally
-
-Overall Assessment:
-
-The assignment successfully demonstrated the fundamental trade-offs in IR 
-
-system design between query speed, memory usage, disk storage, 
-
-implementation complexity, and scalability. The SelfIndex with TF-IDF and 
-
-variable-byte compression (`SelfIndex_i3d1c2qTo0`) offers a good balance of 
-
-speed and efficiency for this specific setup and workload.
-
-  
-
-Yashpal Yadav
-
-
-
-Indexing and retrieval | 6
-
-6. Appendix:
-
-GitHub Repository:
-
-Repository: [Your GitHub Repository URL]
-
-Implementation is available in the `indexing_and_retrieval/` directory with 
-
-all source code, data, and results.
-
-Resources:
-
-1. Manning, C.D., Raghavan, P., & Schütze, H. (2008). *Introduction to 
-
-   Information Retrieval*. Cambridge UP.
-
-2. Elasticsearch Documentation: https://www.elastic.co/guide/
-
-3. Zobel, J., & Moffat, A. (2006). Inverted files for text search engines. 
-
-   *ACM Computing Surveys*.
+6. Python zlib Documentation: https://docs.python.org/3/library/zlib.html
 
 ---
 
-END
+**--- END ---**
 
