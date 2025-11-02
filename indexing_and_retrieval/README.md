@@ -7,7 +7,7 @@ Make sure you add all your code as you work on it to a github repository. We sho
    + `D`: Functional metrics like precision, recall or ranking measures.
 
 ## Activity
-1. Data sources for experiments: preprocess the data including word stemming and stopping, handle any special symbols like punctuation appropriately. Generate word frequency plots with and without text preprocessing. Index the data into Elasticsearch, name it `ESIndex-v1.0`.
+1. Data sources for experiments: preprocess the data including word stemming and stopping, handle any special symbols like punctuation appropriately. Generate word frequency plots with and without text preprocessing. Index the data into Elasticsearch, name it `esindex-v1.0`.
    1. News data at [webz.io](https://github.com/Webhose/free-news-datasets) available on github.
    2. Wiki data from [huggingface](https://huggingface.co/datasets/wikimedia/wikipedia) use the split `20231101.en`.
 1. Implement your own simple indexing (`SelfIndex-v1.0`) over the boilerplate code shared and index the above data into it.
