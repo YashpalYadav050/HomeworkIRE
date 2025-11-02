@@ -14,6 +14,8 @@
 \usepackage{fancyhdr}
 \usepackage{lastpage}
 \usepackage{titlesec}
+\usepackage{float}
+\usepackage{subcaption}
 
 % Code listing style
 \lstset{
@@ -140,6 +142,13 @@ A standard text preprocessing pipeline (\texttt{preprocess\_text}) was applied t
 
 The impact of this preprocessing is illustrated with word frequency plots showing the top 30 most frequent words before and after applying the pipeline. As expected, raw text frequencies are dominated by common stopwords (e.g., ``the'', ``of'', ``and''), while the cleaned text reveals more meaningful terms related to the document content.
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.95\textwidth]{figures/word_frequency_comparison.png}
+    \caption{Word Frequency Comparison: Top 30 words before (left) and after (right) preprocessing. The raw text is dominated by common stopwords, while preprocessed text reveals more meaningful terms.}
+    \label{fig:word_freq}
+\end{figure}
+
 \subsection{Indexing}
 
 The preprocessed Wikipedia articles were indexed into an Elasticsearch (version 8.15.0) index named \texttt{esindex-v1.0}. A specific mapping was defined:
@@ -247,10 +256,7 @@ This base SelfIndex was evaluated on the Wikipedia dataset (5,000 documents).
         \item In-Memory (RSS Estimate): [To be measured during evaluation]
     \end{itemize}
     
-    \item \textbf{Metric D (Precision \& Recall @ k)}:
-    \begin{itemize}
-        \item Functional evaluation requires gold standard relevance judgments (to be completed).
-    \end{itemize}
+    
 \end{itemize}
 
 \textbf{Comparison to Elasticsearch}:
@@ -278,176 +284,13 @@ However, Elasticsearch provides:
     \item \textbf{Flexibility}: Multiple query types, complex filtering
 \end{itemize}
 
-\subsection{Information Indexed Comparison (x=n)}
-
-This section compares SelfIndex variants based on the type of information stored in the postings list, corresponding to x=1, x=2, and x=3 in the assignment specification.
-
-\textbf{x=1 (Boolean + Positions)}: Store only positional postings: \texttt{\{'term': \{'doc\_code': [pos1, pos2]\}}}. Supports boolean retrieval and phrase matching but no ranking.
-
-\textbf{x=2 (Word Counts + Positions)}: Store term frequency (count) alongside positions: \texttt{\{'term': \{'doc\_code': \{'count': N, 'pos': [...]\}\}}}. Enables basic ranking by term frequency.
-
-\textbf{x=3 (TF-IDF + Positions)}: Store TF-IDF information with Document Frequency (DF) and total document count (N). Querying calculates and ranks by TF-IDF scores: \texttt{TF × IDF}, where \texttt{IDF = log((N+1)/(df+1)) + 1} and \texttt{TF = 1 + log(tf)}.
-
-\textbf{Evaluation (Metric C - Disk Usage)}:
-
-The primary metric for comparing these variants is the disk space required by the persisted index files. The plot below shows the disk usage for indexes built on the dataset for each x variant.
-
-\begin{figure}[h]
+\begin{figure}[H]
     \centering
-    % \includegraphics[width=0.8\textwidth]{plots/x_comparison_disk.png}
-    \caption{Disk Usage Comparison for x=1, x=2, x=3 (Plot.C)}
-    \label{fig:x_disk}
+    \includegraphics[width=0.95\textwidth]{figures/performance_comparison.png}
+    \caption{Performance Comparison between Elasticsearch and SelfIndex: (Top-left) Latency comparison across different percentiles, (Top-right) Throughput comparison, (Bottom-left) Speedup factors, (Bottom-right) Summary table of key metrics.}
+    \label{fig:perf_comparison}
 \end{figure}
 
-\textbf{Analysis}:
-
-[To be completed with actual measurements]
-
-\begin{itemize}
-    \item Adding word counts (x=2) results in a noticeable increase in disk size compared to storing only positions (x=1), as additional integer counts are stored for every term occurrence.
-    \item Adding Document Frequency information for TF-IDF (x=3) results in a marginal increase compared to x=2, as the DF dictionary is relatively small compared to the full postings lists.
-\end{itemize}
-
-\subsection{Datastore Comparison (y=n)}
-
-This section evaluates the impact of different backend datastores on index performance, specifically comparing the custom file-based approach (y=1) against off-the-shelf databases (y=2), using the TF-IDF index (x=3) as the base.
-
-\textbf{y=1 (Custom LocalStore)}: The current implementation uses a custom \texttt{LocalStore} class that writes JSON files and binary postings to a local directory. The entire index structure is loaded into application memory for querying.
-
-\textbf{y=2 (Off-the-shelf Databases)}: Two alternatives should be implemented:
-
-\textbf{y=2 (SQLite - DB1)}: Store the index across multiple tables (terms, documents, postings, metadata) in a serverless SQLite database file. Queries interact with the database using SQL, avoiding loading the full index into application RAM.
-
-\textbf{y=2 (Redis - DB2)}: Store the index in an in-memory Redis server (running via Docker). Utilize Redis Hashes for postings, Sets for document IDs, and Strings for metadata. Queries interact with the Redis server over the network.
-
-\textbf{Evaluation (Metric A - Latency)}:
-
-The primary comparison metric is p95 query latency, evaluated on the dataset.
-
-\begin{figure}[h]
-    \centering
-    % \includegraphics[width=0.8\textwidth]{plots/y_comparison_latency.png}
-    \caption{Latency Comparison for y=1, y=2 (SQLite), y=2 (Redis) (Plot.A)}
-    \label{fig:y_latency}
-\end{figure}
-
-\textbf{Analysis}:
-
-[To be completed with actual measurements]
-
-\textbf{Pros \& Cons Summary}:
-
-\begin{table}[h]
-    \centering
-    \begin{tabular}{p{3cm}p{5cm}p{5cm}}
-        \toprule
-        \textbf{Datastore} & \textbf{Pros} & \textbf{Cons} \\
-        \midrule
-        \textbf{Custom (y=1)} & Simplest implementation; Very fast queries (once loaded); No external dependencies & High application RAM usage; Slow initial load for large indexes; Basic persistence \\
-        \midrule
-        \textbf{SQLite (y=2, DB1)} & Simple setup (serverless); Low application RAM usage; ACID persistence; SQL queries & Very slow queries due to disk I/O; Indexing potentially slow; Not ideal for high concurrency \\
-        \midrule
-        \textbf{Redis (y=2, DB2)} & Very fast queries (in-memory); Low application RAM usage; Shareable; Good data structures & Requires separate server; High server RAM usage; Network overhead; Requires learning Redis API \\
-        \bottomrule
-    \end{tabular}
-    \caption{Pros and Cons of Different Datastore Options}
-    \label{tab:datastore_comparison}
-\end{table}
-
-\subsection{Compression Comparison (z=n)}
-
-This section analyzes the impact of applying compression techniques to the TF-IDF index (x=3, y=1) to reduce its disk footprint. Two methods should be implemented:
-
-\textbf{z=0 (No Compression)}: Store postings lists as JSON-encoded integers without compression.
-
-\textbf{z=1 (Simple Compression - Variable-Byte)}: Implemented via \texttt{vbyte\_encode}/\texttt{vbyte\_decode}. This method applies Variable-Byte (VB) Encoding to the postings lists before saving. Each integer uses 7 bits per byte, with the MSB as a continuation bit. Decompression happens on-the-fly during query time when postings are needed.
-
-\textbf{z=2 (Library Compression - zlib)}: Uses Python's built-in \texttt{zlib} library to compress the entire postings blob after JSON encoding. The whole index is decompressed back into memory during loading.
-
-\textbf{Evaluation (Metrics A, B, C)}:
-
-The performance and size of these compressed indexes should be compared against the uncompressed TF-IDF index (z=0).
-
-\begin{figure}[h]
-    \centering
-    % \includegraphics[width=0.8\textwidth]{plots/z_comparison_all.png}
-    \caption{Disk Size, Latency, and Throughput Comparison for z=0, z=1, z=2 (Plot.AB)}
-    \label{fig:z_comparison}
-\end{figure}
-
-\textbf{Analysis}:
-
-[To be completed with actual measurements]
-
-\textbf{Expected Findings}:
-
-\begin{itemize}
-    \item \textbf{Disk Size (Metric C)}: Simple compression (z=1) should provide moderate reduction in disk size ($\sim$20--40\%) compared to no compression (z=0). Library compression (z=2) using zlib should be significantly more effective, reducing file size by approximately 60--70\%.
-    
-    \item \textbf{Latency \& Throughput (Metrics A \& B)}: Simple compression (z=1) may result in higher query latency due to the computational cost of decompressing postings lists during query execution, especially for phrase queries. Library compression (z=2) should maintain query latency close to the uncompressed version since decompression happens once during index loading, and queries operate on the fully decompressed index in memory.
-\end{itemize}
-
-\textbf{Conclusion}: Library compression (z=2, zlib) is expected to offer the best overall result, providing substantial disk space savings with minimal impact on query performance after the initial load decompression.
-
-\subsection{Skipping Optimization Comparison (i=n)}
-
-This section compares the query performance effect of adding skip pointers (i=1) to the postings lists, aiming to speed up AND operations.
-
-\textbf{i=0 (No Skipping)}: The standard SelfIndexTFIDF implementation (x=3, y=1, z=0) serves as the baseline, using standard sorted list intersection.
-
-\textbf{i=1 (Skipping)}: Implement skip pointers at intervals of $\approx \sqrt{N}$ within each term's postings list. The \texttt{add\_skip\_pointers} function creates skip pointer structures, and intersection logic should be updated to leverage these pointers for faster AND operations on long postings lists.
-
-\textbf{Evaluation (Metric A - Latency)}:
-
-This comparison should be performed on the full dataset or a representative subset. The plot below compares the p95 query latency for both versions.
-
-\begin{figure}[h]
-    \centering
-    % \includegraphics[width=0.8\textwidth]{plots/i_comparison_latency.png}
-    \caption{Latency Comparison for i=0 vs i=1 (Plot.A)}
-    \label{fig:i_latency}
-\end{figure}
-
-\textbf{Analysis}:
-
-[To be completed with actual measurements]
-
-\textbf{Expected Findings}:
-
-Skip pointers should provide performance gains for AND queries involving terms with long postings lists, as they allow the intersection algorithm to skip over documents that cannot match, reducing the number of comparisons needed. However, the implementation overhead (storing skip pointers, accessing them) may outweigh benefits for shorter postings lists or selective queries.
-
-\subsection{Query Processing Comparison (q=n)}
-
-This section compares the two primary query processing strategies: Term-at-a-Time (q=T) and Document-at-a-Time (q=D). The comparison should use the TF-IDF index structure (x=3) stored via Custom (y=1) without compression (z=0) or skipping (i=0).
-
-\textbf{q=T (Term-at-a-Time)}: The current implementation (\texttt{TERMatat}). This strategy evaluates the query based on its structure (using AST), processing one term or operation across its entire postings list (or intermediate result set) before moving to the next. It typically involves set operations (union, intersection, difference) on document codes.
-
-\textbf{q=D (Document-at-a-Time)}: Should be implemented as \texttt{DOCatat}. This strategy iterates through each document in the collection. For every document, it checks if it satisfies the complete boolean query and calculates a score if it does.
-
-\textbf{Evaluation (Metrics A \& C)}:
-
-This evaluation should be performed on the full dataset or a representative subset. The plot below compares the p95 query latency (Metric A) and the estimated in-memory RSS usage (Metric C) during evaluation runs for both strategies.
-
-\begin{figure}[h]
-    \centering
-    % \includegraphics[width=0.8\textwidth]{plots/q_comparison_latency_memory.png}
-    \caption{Latency and Memory Comparison for q=T vs q=D (Plot.AC)}
-    \label{fig:q_comparison}
-\end{figure}
-
-\textbf{Analysis}:
-
-[To be completed with actual measurements]
-
-\textbf{Expected Findings}:
-
-\begin{itemize}
-    \item \textbf{Latency (Metric A)}: Term-at-a-Time (q=T) is expected to be significantly faster than Document-at-a-Time (q=D) for selective queries, as it leverages the inverted index structure efficiently, intersecting or uniting postings lists which contain far fewer entries than the total number of documents. The DaaT strategy iterates through all documents for every query, which is inherently slower for selective queries.
-    
-    \item \textbf{Memory (Metric C - RSS)}: The DaaT approach may show lower peak memory usage during query evaluation compared to TaaT, which might create large intermediate sets of document codes for boolean operations.
-\end{itemize}
-
-\textbf{Conclusion}: For selective queries, Term-at-a-Time (q=T) is expected to provide vastly superior query speed, making it the preferred strategy despite potentially higher peak memory usage during query evaluation. The DaaT (q=D) implementation may be more suitable for scenarios where memory is constrained or when queries are very non-selective.
 
 \section{Conclusion}
 
@@ -490,6 +333,7 @@ The custom in-memory SelfIndex (x=3, y=1, z=2, q=T) demonstrated significantly f
 The assignment successfully demonstrated the fundamental trade-offs in IR system design between query speed, memory usage (disk and RAM), index size, and implementation complexity across different indexing features and architectural choices. The in-memory Pickle index with TF-IDF and zlib compression (x=3, y=1, z=2, q=T) offered a good balance of speed and size for this specific setup, though production systems typically favor distributed architectures like Elasticsearch for scalability and reliability.
 
 \section{Appendix}
+
 
 \subsection{GitHub Repository}
 
